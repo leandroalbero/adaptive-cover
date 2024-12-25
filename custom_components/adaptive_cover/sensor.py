@@ -289,8 +289,6 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
         self._attr_unique_id = f"{unique_id}_forecast"
 
     def _generate_forecast(self) -> list:
-        """Generate 24h forecast data."""
-        # Get calculation class based on cover type
         if self._cover_type == "cover_blind":
             cover_data = AdaptiveVerticalCover(
                 self.hass,
@@ -306,7 +304,7 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
                 *self.coordinator.vertical_data(self.config_entry.options),
                 *self.coordinator.horizontal_data(self.config_entry.options),
             )
-        else:  # cover_tilt
+        else:
             cover_data = AdaptiveTiltCover(
                 self.hass,
                 *self.coordinator.pos_sun,
@@ -314,23 +312,17 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
                 *self.coordinator.tilt_data(self.config_entry.options),
             )
 
-        # Get sun data for next 24h
         sun_data = cover_data.sun_data
         forecast = []
 
         for idx, time in enumerate(sun_data.times):
-            # Calculate position for each time
             cover_data.sol_azi = sun_data.solar_azimuth[idx]
             cover_data.sol_elev = sun_data.solar_elevation[idx]
-
-            # Get position from normal cover state
             normal_state = NormalCoverState(cover_data)
             position = normal_state.get_state()
 
-            # Convert pandas Timestamp to isoformat string
             timestamp = pd.Timestamp(time).isoformat()
 
-            # Add data point
             forecast.append({
                 "time": timestamp,
                 "position": float(position),
