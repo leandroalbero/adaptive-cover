@@ -287,6 +287,7 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
         super().__init__(unique_id, hass, config_entry, name, coordinator)
         self._sensor_name = "Cover Forecast"
         self._attr_unique_id = f"{unique_id}_forecast"
+        self._cover_type = config_entry.data.get(CONF_SENSOR_TYPE)  # Add this line
 
     def _generate_forecast(self) -> list:
         if self._cover_type == "cover_blind":
