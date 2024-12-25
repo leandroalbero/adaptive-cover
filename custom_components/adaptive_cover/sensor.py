@@ -273,8 +273,6 @@ class AdaptiveCoverControlSensorEntity(
 
 
 class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
-    """Forecast sensor for Adaptive Cover."""
-
     _attr_icon = "mdi:chart-line"
 
     def __init__(
@@ -285,7 +283,6 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
             name: str,
             coordinator: AdaptiveDataUpdateCoordinator,
     ) -> None:
-        """Initialize forecast sensor."""
         super().__init__(unique_id, hass, config_entry, name, coordinator)
         self._sensor_name = "Cover Forecast"
         self._attr_unique_id = f"{unique_id}_forecast"
@@ -294,10 +291,8 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
         self._last_forecast = None
 
     def _generate_forecast(self) -> list:
-        """Generate 24h forecast data with caching."""
         now = dt_util.utcnow()
 
-        # Return cached data if less than 5 minutes old
         if (self._last_forecast and self._forecast_data and
                 now - self._last_forecast < timedelta(minutes=5)):
             return self._forecast_data
@@ -320,23 +315,28 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
             )
 
             forecast = []
+            options = self.config_entry.options
 
             for time in times:
-                # Calculate sun position
                 solar_azi = cover_data.sun_data.location.solar_azimuth(
                     time, cover_data.sun_data.elevation)
                 solar_elev = cover_data.sun_data.location.solar_elevation(
                     time, cover_data.sun_data.elevation)
 
-                # Update cover calculator with new sun position
                 cover_data.sol_azi = solar_azi
                 cover_data.sol_elev = solar_elev
 
-                # Calculate position
                 normal_state = NormalCoverState(cover_data)
-                position = normal_state.get_state()
 
-                # Add data point
+                sunset = cover_data.sun_data.sunset()
+                sunrise = cover_data.sun_data.sunrise()
+
+                if (time.replace(tzinfo=None) > (sunset + timedelta(minutes=cover_data.sunset_off)) or
+                        time.replace(tzinfo=None) < (sunrise + timedelta(minutes=cover_data.sunrise_off))):
+                    position = float(options.get("sunset_position", 0))
+                else:
+                    position = normal_state.get_state()
+
                 forecast.append({
                     "time": time.isoformat(),
                     "position": float(position),
@@ -353,7 +353,6 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
             return []
 
     def _get_cover_calculator(self):
-        """Get the appropriate cover calculator."""
         try:
             options = self.config_entry.options
             if self._cover_type == "cover_blind":
@@ -384,14 +383,12 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return forecast data in attributes."""
         attributes = super().extra_state_attributes or {}
         attributes["forecast"] = self._generate_forecast()
         return attributes
 
     @property
     def native_value(self) -> str | None:
-        """Return the current forecast position."""
         forecast = self._generate_forecast()
         if forecast:
             return forecast[0]["position"]
