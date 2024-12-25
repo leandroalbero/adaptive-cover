@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import Any
 
 import pandas as pd
@@ -18,11 +19,12 @@ from homeassistant.helpers.device_registry import DeviceEntryType
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .calculation import AdaptiveVerticalCover, AdaptiveHorizontalCover, AdaptiveTiltCover, NormalCoverState
 from .const import (
     CONF_SENSOR_TYPE,
-    DOMAIN,
+    DOMAIN, _LOGGER,
 )
 from .coordinator import AdaptiveDataUpdateCoordinator
 
@@ -287,51 +289,97 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
         super().__init__(unique_id, hass, config_entry, name, coordinator)
         self._sensor_name = "Cover Forecast"
         self._attr_unique_id = f"{unique_id}_forecast"
-        self._cover_type = config_entry.data.get(CONF_SENSOR_TYPE)  # Add this line
+        self._cover_type = config_entry.data.get(CONF_SENSOR_TYPE)
+        self._forecast_data = None
+        self._last_forecast = None
 
     def _generate_forecast(self) -> list:
-        if self._cover_type == "cover_blind":
-            cover_data = AdaptiveVerticalCover(
-                self.hass,
-                *self.coordinator.pos_sun,
-                *self.coordinator.common_data(self.config_entry.options),
-                *self.coordinator.vertical_data(self.config_entry.options),
+        """Generate 24h forecast data with caching."""
+        now = dt_util.utcnow()
+
+        # Return cached data if less than 5 minutes old
+        if (self._last_forecast and self._forecast_data and
+                now - self._last_forecast < timedelta(minutes=5)):
+            return self._forecast_data
+
+        _LOGGER.debug("Generating new forecast data")
+
+        try:
+            # Get calculation class based on cover type
+            cover_data = self._get_cover_calculator()
+            if not cover_data:
+                return []
+
+            # Generate forecast points every 30 minutes instead of every 5
+            times = pd.date_range(
+                start=now,
+                end=now + timedelta(hours=24),
+                freq="30min",
+                tz=dt_util.DEFAULT_TIME_ZONE
             )
-        elif self._cover_type == "cover_awning":
-            cover_data = AdaptiveHorizontalCover(
-                self.hass,
-                *self.coordinator.pos_sun,
-                *self.coordinator.common_data(self.config_entry.options),
-                *self.coordinator.vertical_data(self.config_entry.options),
-                *self.coordinator.horizontal_data(self.config_entry.options),
-            )
-        else:
-            cover_data = AdaptiveTiltCover(
-                self.hass,
-                *self.coordinator.pos_sun,
-                *self.coordinator.common_data(self.config_entry.options),
-                *self.coordinator.tilt_data(self.config_entry.options),
-            )
 
-        sun_data = cover_data.sun_data
-        forecast = []
+            forecast = []
 
-        for idx, time in enumerate(sun_data.times):
-            cover_data.sol_azi = sun_data.solar_azimuth[idx]
-            cover_data.sol_elev = sun_data.solar_elevation[idx]
-            normal_state = NormalCoverState(cover_data)
-            position = normal_state.get_state()
+            for time in times:
+                # Calculate sun position
+                solar_azi = cover_data.sun_data.location.solar_azimuth(
+                    time, cover_data.sun_data.elevation)
+                solar_elev = cover_data.sun_data.location.solar_elevation(
+                    time, cover_data.sun_data.elevation)
 
-            timestamp = pd.Timestamp(time).isoformat()
+                # Update cover calculator with new sun position
+                cover_data.sol_azi = solar_azi
+                cover_data.sol_elev = solar_elev
 
-            forecast.append({
-                "time": timestamp,
-                "position": float(position),
-                "elevation": float(sun_data.solar_elevation[idx]),
-                "azimuth": float(sun_data.solar_azimuth[idx])
-            })
+                # Calculate position
+                normal_state = NormalCoverState(cover_data)
+                position = normal_state.get_state()
 
-        return forecast
+                # Add data point
+                forecast.append({
+                    "time": time.isoformat(),
+                    "position": float(position),
+                    "elevation": float(solar_elev),
+                    "azimuth": float(solar_azi)
+                })
+
+            self._forecast_data = forecast
+            self._last_forecast = now
+            return forecast
+
+        except Exception as err:
+            _LOGGER.error("Error generating forecast: %s", err)
+            return []
+
+    def _get_cover_calculator(self):
+        """Get the appropriate cover calculator."""
+        try:
+            options = self.config_entry.options
+            if self._cover_type == "cover_blind":
+                return AdaptiveVerticalCover(
+                    self.hass,
+                    *self.coordinator.pos_sun,
+                    *self.coordinator.common_data(options),
+                    *self.coordinator.vertical_data(options),
+                )
+            elif self._cover_type == "cover_awning":
+                return AdaptiveHorizontalCover(
+                    self.hass,
+                    *self.coordinator.pos_sun,
+                    *self.coordinator.common_data(options),
+                    *self.coordinator.vertical_data(options),
+                    *self.coordinator.horizontal_data(options),
+                )
+            elif self._cover_type == "cover_tilt":
+                return AdaptiveTiltCover(
+                    self.hass,
+                    *self.coordinator.pos_sun,
+                    *self.coordinator.common_data(options),
+                    *self.coordinator.tilt_data(options),
+                )
+        except Exception as err:
+            _LOGGER.error("Error creating cover calculator: %s", err)
+        return None
 
     @property
     def extra_state_attributes(self) -> dict:
