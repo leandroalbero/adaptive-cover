@@ -330,12 +330,20 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
 
                 sunset = cover_data.sun_data.sunset().replace(tzinfo=time.tzinfo)
                 sunrise = cover_data.sun_data.sunrise().replace(tzinfo=time.tzinfo)
+                current_time = time
 
-                if (time > (sunset + timedelta(minutes=cover_data.sunset_off)) or
-                        time < (sunrise + timedelta(minutes=cover_data.sunrise_off))):
-                    position = float(options.get("sunset_position", 0))
-                else:
-                    position = normal_state.get_state()
+                night_time = (current_time >= (sunset + timedelta(minutes=cover_data.sunset_off)) or
+                              current_time <= (sunrise + timedelta(minutes=cover_data.sunrise_off)))
+
+                _LOGGER.debug(
+                    "Time: %s, Sunset: %s, Sunrise: %s, Night time: %s",
+                    current_time,
+                    sunset + timedelta(minutes=cover_data.sunset_off),
+                    sunrise + timedelta(minutes=cover_data.sunrise_off),
+                    night_time
+                )
+
+                position = float(options.get("sunset_position", 0)) if night_time else normal_state.get_state()
 
                 forecast.append({
                     "time": time.isoformat(),
