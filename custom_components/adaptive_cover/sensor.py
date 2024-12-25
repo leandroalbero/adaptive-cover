@@ -328,11 +328,11 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
 
                 normal_state = NormalCoverState(cover_data)
 
-                sunset = cover_data.sun_data.sunset()
-                sunrise = cover_data.sun_data.sunrise()
+                sunset = cover_data.sun_data.sunset().replace(tzinfo=time.tzinfo)
+                sunrise = cover_data.sun_data.sunrise().replace(tzinfo=time.tzinfo)
 
-                if (time.replace(tzinfo=None) > (sunset + timedelta(minutes=cover_data.sunset_off)) or
-                        time.replace(tzinfo=None) < (sunrise + timedelta(minutes=cover_data.sunrise_off))):
+                if (time > (sunset + timedelta(minutes=cover_data.sunset_off)) or
+                        time < (sunrise + timedelta(minutes=cover_data.sunrise_off))):
                     position = float(options.get("sunset_position", 0))
                 else:
                     position = normal_state.get_state()
