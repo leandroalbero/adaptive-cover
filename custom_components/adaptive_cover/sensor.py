@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import pandas as pd
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -18,6 +19,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .calculation import AdaptiveVerticalCover, AdaptiveHorizontalCover, AdaptiveTiltCover, NormalCoverState
 from .const import (
     CONF_SENSOR_TYPE,
     DOMAIN,
@@ -63,7 +65,15 @@ async def async_setup_entry(
     control = AdaptiveCoverControlSensorEntity(
         config_entry.entry_id, hass, config_entry, name, coordinator
     )
-    async_add_entities([sensor, start, end, control])
+    forecast = AdaptiveCoverForecastSensor(
+        config_entry.entry_id,
+        hass,
+        config_entry,
+        name,
+        coordinator
+    )
+
+    async_add_entities([sensor, start, end, control, forecast])
 
 
 class AdaptiveCoverSensorEntity(
@@ -258,3 +268,89 @@ class AdaptiveCoverControlSensorEntity(
             identifiers={(DOMAIN, self._device_id)},
             name=self._device_name,
         )
+
+
+class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
+    """Forecast sensor for Adaptive Cover."""
+
+    _attr_icon = "mdi:chart-line"
+
+    def __init__(
+            self,
+            unique_id: str,
+            hass,
+            config_entry,
+            name: str,
+            coordinator: AdaptiveDataUpdateCoordinator,
+    ) -> None:
+        """Initialize forecast sensor."""
+        super().__init__(unique_id, hass, config_entry, name, coordinator)
+        self._sensor_name = "Cover Forecast"
+        self._attr_unique_id = f"{unique_id}_forecast"
+
+    def _generate_forecast(self) -> list:
+        """Generate 24h forecast data."""
+        # Get calculation class based on cover type
+        if self._cover_type == "cover_blind":
+            cover_data = AdaptiveVerticalCover(
+                self.hass,
+                *self.coordinator.pos_sun,
+                *self.coordinator.common_data(self.config_entry.options),
+                *self.coordinator.vertical_data(self.config_entry.options),
+            )
+        elif self._cover_type == "cover_awning":
+            cover_data = AdaptiveHorizontalCover(
+                self.hass,
+                *self.coordinator.pos_sun,
+                *self.coordinator.common_data(self.config_entry.options),
+                *self.coordinator.vertical_data(self.config_entry.options),
+                *self.coordinator.horizontal_data(self.config_entry.options),
+            )
+        else:  # cover_tilt
+            cover_data = AdaptiveTiltCover(
+                self.hass,
+                *self.coordinator.pos_sun,
+                *self.coordinator.common_data(self.config_entry.options),
+                *self.coordinator.tilt_data(self.config_entry.options),
+            )
+
+        # Get sun data for next 24h
+        sun_data = cover_data.sun_data
+        forecast = []
+
+        for idx, time in enumerate(sun_data.times):
+            # Calculate position for each time
+            cover_data.sol_azi = sun_data.solar_azimuth[idx]
+            cover_data.sol_elev = sun_data.solar_elevation[idx]
+
+            # Get position from normal cover state
+            normal_state = NormalCoverState(cover_data)
+            position = normal_state.get_state()
+
+            # Convert pandas Timestamp to isoformat string
+            timestamp = pd.Timestamp(time).isoformat()
+
+            # Add data point
+            forecast.append({
+                "time": timestamp,
+                "position": float(position),
+                "elevation": float(sun_data.solar_elevation[idx]),
+                "azimuth": float(sun_data.solar_azimuth[idx])
+            })
+
+        return forecast
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return forecast data in attributes."""
+        attributes = super().extra_state_attributes or {}
+        attributes["forecast"] = self._generate_forecast()
+        return attributes
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the current forecast position."""
+        forecast = self._generate_forecast()
+        if forecast:
+            return forecast[0]["position"]
+        return None
