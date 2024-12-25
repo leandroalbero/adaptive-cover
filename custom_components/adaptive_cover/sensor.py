@@ -305,17 +305,18 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
         _LOGGER.debug("Generating new forecast data")
 
         try:
-            # Get calculation class based on cover type
             cover_data = self._get_cover_calculator()
             if not cover_data:
                 return []
 
-            # Generate forecast points every 30 minutes instead of every 5
+            tz = dt_util.get_time_zone(str(self.hass.config.time_zone))
+            now_local = dt_util.now(tz)
+
             times = pd.date_range(
-                start=now,
-                end=now + timedelta(hours=24),
+                start=now_local,
+                end=now_local + timedelta(hours=24),
                 freq="30min",
-                tz=str(self.hass.config.time_zone)
+                tz=tz
             )
 
             forecast = []
