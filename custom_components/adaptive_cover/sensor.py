@@ -315,7 +315,7 @@ class AdaptiveCoverForecastSensor(AdaptiveCoverSensorEntity):
                 start=now,
                 end=now + timedelta(hours=24),
                 freq="30min",
-                tz=dt_util.DEFAULT_TIME_ZONE
+                tz=str(self.hass.config.time_zone)
             )
 
             forecast = []
